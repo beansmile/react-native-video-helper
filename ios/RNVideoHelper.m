@@ -39,25 +39,25 @@ RCT_EXPORT_MODULE()
 }
 
 RCT_EXPORT_METHOD(compress:(NSString *)source options:(NSDictionary *)options resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject){
-    
+
     NSDate *methodStart = [NSDate date];
-    
-    NSURL *url = [[NSURL alloc] initWithString:source];
-    
-    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
-    
+
+    NSURL *url = [NSURL fileURLWithPath: source];
+
+//    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+    AVAsset *asset = [AVAsset assetWithURL: url];
     CMTime assetTime = [asset duration];
     Float64 duration = CMTimeGetSeconds(assetTime);
-    
-    NSNumber *startT = @([options[@"startTime"] floatValue]);
-    NSNumber *endT = @([options[@"endTime"] floatValue]);
-    
+
+    Float64 startT = [options[@"startTime"] floatValue];
+    Float64 endT = [options[@"endTime"] floatValue];
+
     AVAssetTrack *videoTrack = [[asset tracksWithMediaType:AVMediaTypeVideo] objectAtIndex:0];
 
     CGSize naturalSize = [videoTrack naturalSize];
 
     CGFloat originalBitrate = [videoTrack estimatedDataRate];
-    
+
     CGFloat maxWidth = 720;
     CGFloat maxHeight = 720;
     CGFloat bitrate = 1300000;
@@ -70,10 +70,10 @@ RCT_EXPORT_METHOD(compress:(NSString *)source options:(NSDictionary *)options re
         maxHeight = 1920;
         bitrate = 2600000;
     }
-    
+
     CGFloat originalWidth = naturalSize.width;
     CGFloat originalHeight = naturalSize.height;
-    
+
     CGSize transformedVideoSize =
     CGSizeApplyAffineTransform(videoTrack.naturalSize, videoTrack.preferredTransform);
     bool videoIsPortrait = transformedVideoSize.width < transformedVideoSize.height;
@@ -82,7 +82,7 @@ RCT_EXPORT_METHOD(compress:(NSString *)source options:(NSDictionary *)options re
         originalWidth = naturalSize.height;
         originalHeight = naturalSize.width;
     }
-    
+
     CGFloat widthRatio = maxWidth / originalWidth;
     CGFloat heightRatio = maxHeight / originalHeight;
     CGFloat bestRatio = MIN(widthRatio, heightRatio);
@@ -92,23 +92,23 @@ RCT_EXPORT_METHOD(compress:(NSString *)source options:(NSDictionary *)options re
     CGFloat height = originalHeight * finalRatio;
 
     SDAVAssetExportSession *encoder = [SDAVAssetExportSession.alloc initWithAsset:asset];
-    
-    if (startT && [startT floatValue] > duration) {
+
+    if (startT > duration) {
         reject(@"start_time_error", @"Start time is longer than video duration", nil);
         return;
     }
-    
-    if (endT && [endT floatValue] > duration) {
-        endT = nil;
+
+    if (endT > duration) {
+        endT = duration;
     }
-    
+
     if (startT || endT) {
-        CMTime startTime = CMTimeMake((startT) ? [startT floatValue] : 0, 1);
-        CMTime stopTime = CMTimeMake((endT) ? [endT floatValue] : duration, 1);
+        CMTime startTime = CMTimeMake(startT, 1);
+        CMTime stopTime = CMTimeMake(endT || duration, 1);
         CMTimeRange exportTimeRange = CMTimeRangeFromTimeToTime(startTime, stopTime);
         encoder.timeRange = exportTimeRange;
     }
-    
+
     encoder.videoSettings = @{
       AVVideoCodecKey: AVVideoCodecH264,
       AVVideoWidthKey: @(width),
@@ -118,36 +118,36 @@ RCT_EXPORT_METHOD(compress:(NSString *)source options:(NSDictionary *)options re
           AVVideoProfileLevelKey: AVVideoProfileLevelH264BaselineAutoLevel,
         },
     };
-    
+
     encoder.audioSettings = @{
       AVFormatIDKey: @(kAudioFormatMPEG4AAC),
       AVNumberOfChannelsKey: @1,
       AVSampleRateKey: @44100,
       AVEncoderBitRateKey: @128000,
     };
-    
+
     encoder.outputFileType = AVFileTypeMPEG4;
     encoder.outputURL = [NSURL fileURLWithPath:
                          [NSTemporaryDirectory() stringByAppendingPathComponent:
                           [NSString stringWithFormat:@"compressed_%@.mov", [[NSProcessInfo processInfo] globallyUniqueString]
                           ]]];
     encoder.shouldOptimizeForNetworkUse = true;
-    
+
     __block NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer * _Nonnull timer) {
         [self updateProgress:encoder.progress];
     }];
-    
+
     [encoder exportAsynchronouslyWithCompletionHandler:^
      {
          [timer invalidate];
          timer = nil;
-         
+
          if (encoder.status == AVAssetExportSessionStatusCompleted)
          {
              NSDate *methodFinish = [NSDate date];
              NSTimeInterval executionTime = [methodFinish timeIntervalSinceDate:methodStart];
              NSLog(@"executionTime = %f", executionTime);
-             
+
              NSLog(@"Video export succeeded");
              resolve(encoder.outputURL.absoluteString);
          } else {
@@ -155,7 +155,6 @@ RCT_EXPORT_METHOD(compress:(NSString *)source options:(NSDictionary *)options re
              reject(@"video_export_error", [NSString stringWithFormat:@"Video export failed with error: %@ (%ld)", encoder.error.localizedDescription, encoder.error.code], nil);
          }
      }];
-    
 }
 
 @end
